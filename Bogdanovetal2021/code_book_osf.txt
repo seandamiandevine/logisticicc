@@ -1,0 +1,44 @@
+Code book
+
+DST_data_osf2:
+
+PID -> participant ID
+condition -> experimental condition (control vs. stress)
+Session	-> session number (1 = first session, 2 = second session)
+block -> block of the DST (1-4)
+effort_choice -> choice of the demand cue (0 = high effort cue, 1 = low effort cue)
+effort_choice_RT -> reaction times of demand cue choice (in seconds)
+TS_correct -> accuracy of participants responses in the task switching part of the DST (0 = incorrect, 1 = correct)
+TS_RT -> reaction times in task swicthing (in seconds)
+Switch -> indicates whether the current trial is a switch or repetition trial (False = repetition, true = switch)
+
+
+DST_demographics_osf:
+
+ID -> participant ID
+Gender -> participants' gender (0 = male, 1 = female)
+Age -> participants' age
+BMI -> participants' body mass index
+GAD -> score generalized anxiety disorder scale
+PHQ -> score patient health questionnaire
+BAS_x -> subscale scores behavioral activation system 
+BIS -> score behavioral inhibition system 
+BISBAS_dummy_items -> dummy item score for the BISBAS scales
+DAS -> score dimensional apathy scale
+NFC -> score need for cognition scale
+PSS -> score perceived stress scale
+SHAPS -> score Snaith Hamilton affective pleasure scale
+UPPS_P_x -> subscale scores UPPS_P 
+systolic_x -> systolic blood pressure at time point x in stress or control conditions
+diastolic_x -> diastolic blood pressure at time point x in stress or control conditions
+heart_rate_x -> heart rate at time point x in stress or control conditions
+PANAS_pos_x -> score for the positive scale of the PANAS at time point x in stress or control conditions
+PANAS_neg_x -> score for the negative scale of the PANAS at time point x in stress or control conditions
+cort_control_x -> salivary cortisol at time point x in stress or control conditions
+TSST_difficult_x -> participants' assessement of difficulty for the stress manipulation in stress or control conditions
+TSST_unpleasant_x -> participants' assessement of unpleasantness for the stress manipulation in stress or control conditions
+TSST_stressful_x -> participants' assessement of stressfulness for the stress manipulation in stress or control conditions
+session_order -> order of stress and control conditions as experienced by the participants (1 = control/stress, 2 = stress/control)
+OSPAN_math_errors_x -> errors in the math equations in the Operation Span task in stress or control conditions
+OSPAN_score_x -> score in the Operation Span task in stress or control conditions
+OSPAN_total_x -> total remembered letters in the Operation Span task in stress or control conditions
