@@ -130,6 +130,32 @@ simICC_f      <- var(p_hat_f)/(var(p_hat_f) + sigma2_f)
 cat('ICC for men using the Simulation Model = ',simICC_m,'\n')
 cat('ICC for women using the Simulation Model = ',simICC_f,'\n')
 
+
+# ICC: Simulation Method (Conditional ICC -- Averagr Approach) ------------
+
+# 0. Extract intercept-variance and fixed effects and specify number of simulations
+tau20 <- VarCorr(logisticMLM_gender)$PID[1]
+M <- 1e5
+set.seed(10408) # for reproducibility 
+
+# 1. Simulate random effects
+U0j <- rnorm(M, 0, sqrt(tau20))
+
+# 2. Compute average fixed effect
+# NOTE: gamma here refers to the average predicted fixed effect
+gamma <- mean(predict(logisticMLM_gender, re.form = NA))
+
+# 2. Predict probabilities 
+logit_p_hat <- gamma+U0j
+p_hat       <- exp(logit_p_hat)/(1+exp(logit_p_hat))
+
+# 3. Compute level-1 variance (Bernouilli variance)
+var_L1      <- p_hat*(1-p_hat) 
+
+# 4. Compute ICC
+sigma2      <- mean(var_L1)
+simICC      <- var(p_hat)/(var(p_hat) + sigma2)
+
 # ICC: Linearization -----------------------------------------------------------
 
 # 0. Extract relevant parameters (tau0 and gamma00)
@@ -255,6 +281,3 @@ g00  <- fixef(linear_MLM)[1]
 hist(U0js, xlab = expression(gamma['00']+U['0j']), ylab='Number of Particpants', main='')
 abline(v=g00, col='red', lty=2, lwd=2)
 legend('topright', bty='n', col='red', lty=2, lwd=2, legend=expression(gamma['00']))
-
-
-
