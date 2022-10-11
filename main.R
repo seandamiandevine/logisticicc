@@ -7,14 +7,10 @@
 # Load data ---------------------------------------------------------------
 # Load the data from .csv and do the following things: 
   # 1. subset the data such that we only look at participants in the control condition 
-  # 2. Add participant demographic information into the dataframe of participant choice
-  # 3. For simplicity, recode effort choices so that 1 = high effort and 0 = low effort
+  # 2. For simplicity, recode effort choices so that 1 = high effort and 0 = low effort
 
 data                   <- read.csv('Bogdanovetal2021/DST_data_osf2.csv')
 data.Ctl               <- data[data$condition=='control', ] # focus just on control condition
-demo                   <- read.csv('Bogdanovetal2021/DST_demographics_osf.csv')
-colnames(demo)[which(colnames(demo)=='ID')] <- 'PID'
-data.Ctl               <- merge(data.Ctl, demo[,c('PID', 'Gender')], by='PID')
 data.Ctl$effort_choice <- abs(data.Ctl$effort_choice-1) 
 
 # Logistic multilevel model for choice -------------------------------------------------------------------
@@ -38,10 +34,11 @@ cat('estimated group average probability of choosing the high-effort cue = ', pC
 # # Reproduce Figure 2 from paper -----------------------------------------
 
 # extract random intercepts from model and add them to the fixed effect (gamma00) 
-eb                 <- coef(logistic_MLM0)$PID
+eb  <- coef(logistic_MLM0)$PID
+head(eb)
 
 # extract the estimated random intercept variance (tau^2_0)
-tau = VarCorr(logistic_MLM0)$PID[1]
+tau <- VarCorr(logistic_MLM0)$PID[1]
 
 # plot the histogram of the random intercepts and overlay an estimated normal density curve with 
 # mu = gamma00 and sd = sqrt(tau^2_0)
@@ -92,70 +89,6 @@ simICC      <- var(p_hat)/(var(p_hat) + sigma2)
 # print result
 cat('ICC using the Simulation Model = ',simICC,'\n')
 
-# ICC: Simulation method (Conditional ICC) ---------------------------------------------------------------------
-
-# Convert gender to a factor in the data-framre and effects code it 
-data.Ctl$Gender            <- factor(data.Ctl$Gender)
-contrasts(data.Ctl$Gender) <- contr.sum(2)
-logisticMLM_gender         <- glmer(effort_choice ~ Gender + (1|PID), data=data.Ctl, family='binomial')
-
-# 0. Extract intercept-variance and fixed effects and specify number of simulations
-set.seed(2022) # for reproducibility 
-tau20         <- VarCorr(logisticMLM_gender)$PID[1]
-gamma         <- fixef(logisticMLM_gender)
-M             <- 1e5
-
-# 1. Simulate random effects
-U0j           <- rnorm(M, 0, sqrt(tau20))
-
-# 2. Predict probabilities for repeat and switch trials
-logit_p_hat_m <- gamma[1]+U0j + gamma[2]*1
-logit_p_hat_f <- gamma[1]+U0j + gamma[2]*-1
-
-p_hat_m       <- exp(logit_p_hat_m)/(1+exp(logit_p_hat_m))
-p_hat_f       <- exp(logit_p_hat_f)/(1+exp(logit_p_hat_f))
-
-# 3. Compute level-1 variance (Bernouilli variance)
-var_L1_m      <- p_hat_m*(1-p_hat_m) 
-var_L1_f      <- p_hat_f*(1-p_hat_f) 
-
-# 4. Compute ICC for repeat and switch trials
-sigma2_m      <- mean(var_L1_m)
-sigma2_f      <- mean(var_L1_f)
-
-simICC_m      <- var(p_hat_m)/(var(p_hat_m) + sigma2_m)
-simICC_f      <- var(p_hat_f)/(var(p_hat_f) + sigma2_f)
-
-# print result
-cat('ICC for men using the Simulation Model = ',simICC_m,'\n')
-cat('ICC for women using the Simulation Model = ',simICC_f,'\n')
-
-
-# ICC: Simulation Method (Conditional ICC -- Averagr Approach) ------------
-
-# 0. Extract intercept-variance and fixed effects and specify number of simulations
-tau20 <- VarCorr(logisticMLM_gender)$PID[1]
-M <- 1e5
-set.seed(10408) # for reproducibility 
-
-# 1. Simulate random effects
-U0j <- rnorm(M, 0, sqrt(tau20))
-
-# 2. Compute average fixed effect
-# NOTE: gamma here refers to the average predicted fixed effect
-gamma <- mean(predict(logisticMLM_gender, re.form = NA))
-
-# 2. Predict probabilities 
-logit_p_hat <- gamma+U0j
-p_hat       <- exp(logit_p_hat)/(1+exp(logit_p_hat))
-
-# 3. Compute level-1 variance (Bernouilli variance)
-var_L1      <- p_hat*(1-p_hat) 
-
-# 4. Compute ICC
-sigma2      <- mean(var_L1)
-simICC      <- var(p_hat)/(var(p_hat) + sigma2)
-
 # ICC: Linearization -----------------------------------------------------------
 
 # 0. Extract relevant parameters (tau0 and gamma00)
@@ -177,77 +110,115 @@ linICC  <- var2/(var1+var2)
 # print result
 cat('ICC using the Linearization method = ',linICC,'\n')
 
-
 # Median Odds Ratio ----------------------------------------------------------------
 
 tau20 <- VarCorr(logistic_MLM0)$PID[1]
 phi75 <- qnorm(.75) # 75th percentile of normal CDF
-MOR   <- exp(sqrt(2*tau0)*phi75)
+MOR   <- exp(sqrt(2*tau20)*phi75)
  
 cat('Median Odds Ratio = ',MOR,'\n')
 
 # Bootstrapping ------------------------------------------------------
 
-# 0. Set constants for bootstrapping procedure
-B       <- 1000                    # number of bootstraps
-ids     <- logistic_MLM0@frame$PID # extract id vector from model data
-K       <- length(unique(ids))     # number of clusters (subjects)
-nTrials <- table(ids)              # number of trials per subject  
-tau20   <- VarCorr(logistic_MLM0)$PID[1]
-g00     <- fixef(logistic_MLM0)[[1]]
-output  <- matrix(NA, B, 7, dimnames = list(NULL, c('iteration', 'threshICC', 'simICC', 'linICC', 'MOR', 'g00', 'tau20')))
+source('fx.R') # import custom functions
 
-# 1. Cycle through iterations (i) of bootstrapped samples
-for(i in 1:B) {
-  if(i%%100==0) cat('bootstrapping is', round(i/B,2)*100, '% complete.')
-  # 1.1 Simulate data
-  U0j           <- rnorm(K, 0, tau20)        # random deviations per subject
-  LOR_j         <- g00 + U0j                 # log odds of response==1 per subject
-  p_j           <- exp(LOR_j)/(1+exp(LOR_j)) # convert LOR to probability
-  y_ij          <- sapply(1:K, function(k) rbinom(nTrials[k], 1, p_j[k]))
-  y_ij          <- unlist(y_ij)              # break out of a list format
-  
-  # 1.2 Fit new model and compute values of interest
-  thisMLM       <- glmer(y_ij ~ 1 + (1|ids), family='binomial')
-  thisG00       <- fixef(thisMLM)[[1]]
-  thistau20     <- VarCorr(thisMLM)$ids[1]
-  
-  # 1.2.1. Latent Threshold ICC
-  thisthreshICC <- thistau20/(thistau20+pi^2/3)
+bootstrap_thr <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_thr', B = 100, seed = 2022)
+bootstrap_sim <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_sim', B = 100, seed = 2022)
+bootstrap_lin <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_lin', B = 100, seed = 2022)
+bootstrap_MOR <- bootstrap_icc(logistic_MLM0, gr='PID', method='MOR', B = 100, seed = 2022)
 
-  # 1.2.2. Simulation ICC
-  thisU0j       <- rnorm(1e5, 0, sqrt(thistau20))
-  logit_p_hat   <- thisG00+U0j
-  p_hat         <- exp(logit_p_hat)/(1+exp(logit_p_hat))
-  var_L1        <- p_hat*(1-p_hat) 
-  sigma2        <- mean(var_L1)
-  thissimICC    <- var(p_hat)/(var(p_hat) + sigma2)
-  
-  # 1.2.3. Linearlization 
-  p             <- exp(thisG00)/(1+exp(thisG00))
-  var1          <- p*(1-p)
-  var2          <- thistau20*p^2*(1 + exp(gamma00))^(-2)
-  thislinICC    <- var2/(var1+var2)
-  
-  # 1.2.4. MOR
-  thisMOR       <- exp(sqrt(2*thistau20)*qnorm(.75))
-  
-  # 1.3. Save output
-  output[i,] = c(i, thisthreshICC, thissimICC, thislinICC, thisMOR, thisG00, thistau20)
-  
+quantile(bootstrap_thr, c(.025, .975))
+quantile(bootstrap_sim, c(.025, .975))
+quantile(bootstrap_lin, c(.025, .975))
+quantile(bootstrap_MOR, c(.025, .975))
+
+
+
+# Bootstrap by hand, for those who are interested.
+
+# # 0. Set constants for bootstrapping procedure
+# B       <- 1000                    # number of bootstraps
+# ids     <- logistic_MLM0@frame$PID # extract id vector from model data
+# K       <- length(unique(ids))     # number of clusters (subjects)
+# nTrials <- table(ids)              # number of trials per subject  
+# tau20   <- VarCorr(logistic_MLM0)$PID[1]
+# g00     <- fixef(logistic_MLM0)[[1]]
+# output  <- matrix(NA, B, 7, dimnames = list(NULL, c('iteration', 'threshICC', 'simICC', 'linICC', 'MOR', 'g00', 'tau20')))
+# 
+# # 1. Cycle through iterations (i) of bootstrapped samples
+# for(i in 1:B) {
+#   if(i%%100==0) cat('bootstrapping is', round(i/B,2)*100, '% complete.')
+#   # 1.1 Simulate data
+#   U0j           <- rnorm(K, 0, tau20)        # random deviations per subject
+#   LOR_j         <- g00 + U0j                 # log odds of response==1 per subject
+#   p_j           <- exp(LOR_j)/(1+exp(LOR_j)) # convert LOR to probability
+#   y_ij          <- sapply(1:K, function(k) rbinom(nTrials[k], 1, p_j[k]))
+#   y_ij          <- unlist(y_ij)              # break out of a list format
+#   
+#   # 1.2 Fit new model and compute values of interest
+#   thisMLM       <- glmer(y_ij ~ 1 + (1|ids), family='binomial')
+#   thisG00       <- fixef(thisMLM)[[1]]
+#   thistau20     <- VarCorr(thisMLM)$ids[1]
+#   
+#   # 1.2.1. Latent Threshold ICC
+#   thisthreshICC <- thistau20/(thistau20+pi^2/3)
+# 
+#   # 1.2.2. Simulation ICC
+#   thisU0j       <- rnorm(1e5, 0, sqrt(thistau20))
+#   logit_p_hat   <- thisG00+U0j
+#   p_hat         <- exp(logit_p_hat)/(1+exp(logit_p_hat))
+#   var_L1        <- p_hat*(1-p_hat) 
+#   sigma2        <- mean(var_L1)
+#   thissimICC    <- var(p_hat)/(var(p_hat) + sigma2)
+#   
+#   # 1.2.3. Linearlization 
+#   p             <- exp(thisG00)/(1+exp(thisG00))
+#   var1          <- p*(1-p)
+#   var2          <- thistau20*p^2*(1 + exp(gamma00))^(-2)
+#   thislinICC    <- var2/(var1+var2)
+#   
+#   # 1.2.4. MOR
+#   thisMOR       <- exp(sqrt(2*thistau20)*qnorm(.75))
+#   
+#   # 1.3. Save output
+#   output[i,] = c(i, thisthreshICC, thissimICC, thislinICC, thisMOR, thisG00, thistau20)
+#   
+# }
+
+
+# ICC with one predictor, random intercept, and fixed slopes -----------------------------------
+
+# Compute trial per block to use as a predictor
+data.Ctl = data.Ctl[order(c(data.Ctl$PID, data.Ctl$block)), ]
+data.Ctl = data.Ctl[!is.na(data.Ctl$PID),]
+
+trial = c()
+for(i in unique(data.Ctl$PID)) {
+  for(j in unique(data.Ctl$block)) {
+    trial = c(trial, 1:nrow(data.Ctl[data.Ctl$PID==i & data.Ctl$block==j, ]))
+  }
 }
 
+data.Ctl$trial=trial
 
-# Reproduce Figure 3 from paper -------------------------------------------
+# Model effort choice trial-by-trial
+data.Ctl$trial_c = data.Ctl$trial - median(data.Ctl$trial)
+data.Ctl$trial0  = data.Ctl$trial_c/max(data.Ctl$trial_c)
+  
+logistic_MLM1 = glmer(effort_choice ~ trial0 + (1|PID), data=data.Ctl, family='binomial')
+summary(logistic_MLM1)
 
-layout(matrix(1:6,2,3,byrow=T))
-pretty_titles <- list('threshICC'='Latent Threshold', 'simICC'='Simulation', 'linICC' = 'Linearization', 
-                      'MOR'='MOR', 'g00'=expression(bold(gamma['00'])), 'tau20'=expression(bold(tau[0]^2)))
-for(var in c('threshICC', 'simICC', 'linICC', 'MOR', 'g00', 'tau20')) {
-  
-  hist(output[,var], main=pretty_titles[[var]], col='white', xlab='')
-  
-}
+icc_thr(logistic_MLM0, 'PID')
+icc_thr(logistic_MLM1, 'PID')
+
+icc_sim(logistic_MLM0, 'PID')
+icc_sim(logistic_MLM1, 'PID')
+
+icc_lin(logistic_MLM1, 'PID')
+icc_lin(logistic_MLM1, 'PID')
+
+MOR(logistic_MLM0, 'PID')
+MOR(logistic_MLM0, 'PID')
 
 
 # Supplemental ------------------------------------------------------------
@@ -255,8 +226,7 @@ for(var in c('threshICC', 'simICC', 'linICC', 'MOR', 'g00', 'tau20')) {
 # Linear regression of RT --
 
 # effects code the "Switch" variable
-contrasts(data$Switch) <- contr.sum(2) 
-linear_regression      <- lm(TS_RT ~ Switch, data=data.Ctl)
+linear_regression <- lm(TS_RT ~ Switch, data=data.Ctl)
 print(summary(linear_regression))
 cat('The residual variance (sigma^2) of the linear regession equals', sigma(linear_regression)^2, '\n')
 

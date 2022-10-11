@@ -105,7 +105,7 @@ bootstrap_icc <- function(fit, gr, method, B=5e3, seed=1234) {
   #'
   #' @examples bootstrap_icc(model,"PID","icc_lin",B=1e3,seed=2022)
 
-  sims <-  simulate(fit, B, seed)
+  sims <- simulate(fit, B, seed)
   pb <- txtProgressBar(0,B)
   out <- rep(NA, B)
   for(i in 1:B) {
