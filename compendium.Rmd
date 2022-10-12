@@ -1,0 +1,512 @@
+---
+title: Compendium to "A Tutorial for Quantifying Within- and Between-Participant Variance  in
+  Multilevel Logistic Models"
+author: "Sean Devine, A. Ross Otto, James O. Uanhoro, Jessica Kay Flake"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# What is this?
+
+This is a supplemental companion piece for "A Tutorial for Quantifying Within- and Between-Participant Variance in Multilevel Logistic Models" (**PUBLICATION LINK**). This document is meant to contain all the code (code boxes and other miscellaneous analyses) used in the paper in one place for easy to follow use. 
+
+The goal of this document is to present all of the techniques presented in the paper in a reproducible and easy to follow manner. Throughout this compendium, we will refer to R functions. We assume readers are familiar with the basics of R syntax and some basic functionality, but will do our best to remain as clear as possible if they are not. This document is meant to be read *alongside* the original paper. We will not go into as much detail about the concepts being presented and, as such, urge readers to use this as a supplement to the original paper, rather than a wholly complete tutorial in its own right. 
+
+This document will proceed in the same order as the original paper and will include all of the same code and data. Note: in the paper, we included paranthetical referencing the associated compendium section to follow along with. These sections are listed here:
+
+1.  Loading and cleaning the data.
+2.  Fitting and summarizing `logistic_MLM0`.
+3.  Reproducing Figure 2 in the paper.
+4.  Computing the ICC using
+    a.  The Latent Threshold approach
+    b.  The Simulation approach
+    c.  The Linearization approach
+    d.  The Median Odds Ratio
+5.  Bootstrapping procedures
+6.  Computing the ICC with a model that contains predictors.
+7.  Supplemental Materials
+    a.  Linear regression of response times.
+    b.  Multilevel linear regression of response times.
+    c.  Reproduce Figure S1. 
+
+# 1. Loading and cleaning the data
+
+First, the data is loaded from a .csv file provided on the OSF page for Bogdanov et al. (2022)[ <https://osf.io/26w4u/>]. This is done with the `read.csv()` function that is built-in to R.
+
+```{r load pt.1, attr.source='.numberLines'}
+data <- read.csv('Bogdanovetal2021/DST_data_osf2.csv')
+```
+
+We then subset the data such that `data.Ctl` only contains data from participants in the control condition.
+
+```{r load pt.2, attr.source='.numberLines'}
+data.Ctl <- data[data$condition=='control', ] 
+```
+
+Finally, we reverse-code the `effort_choice` variable to make it easier to interpret, such that `0` refers to low effort choices and `1` refers to high effort choices.
+
+```{r load pt.3, attr.source='.numberLines'}
+data <- data.Ctl$effort_choice <- abs(data.Ctl$effort_choice-1) 
+```
+
+
+# 2. Fitting and summarizing `logistic_MLM0`.
+
+Next, we fit `logisticMLM0` from the paper. As a reminder, this is the null model on which the variance parameters were estimated throughout the text.
+
+To begin, we load the `lme4` package. If you do not have it installed already, run `install.packages('lme4')` to do so. 
+
+```{r fit logisticMLM0 pt.1, attr.source='.numberLines', message=FALSE}
+# if the lme4 is not installed, run this command first:
+# install.packages('lme4')
+library(lme4)
+```
+
+
+Now we can fit the model described in the text. To do so, we use the `glmer()` function from `lme4`. The first variable before the `~` is the binary outcome variable, `effort_choice` in our case. After the `~`, we input the predictor variables, which in this case is just the intercept, designated by a `1`. Finally, we specify the random effects and grouping variable. Here, we only estimate random intercepts, hence we input a `1` before the `|` followed by the grouping factor, which here is `PID`. We then specify the data to be used, using the `data=data.Ctl` argument, and finally specify the distribution to be used, which in this case is the `binomial` distribution. For more information on `lme4` syntax in R, see https://www.learn-mlms.com/. 
+
+```{r fit logisticMLM0 pt.2, attr.source='.numberLines', message=FALSE}
+logistic_MLM0 <- glmer(effort_choice ~ 1 + (1|PID), data=data.Ctl, family='binomial')
+```
+
+We then output the summary of the model to the console. 
+
+```{r fit logisticMLM0 pt 3, attr.source='.numberLines', message=FALSE}
+summary(logistic_MLM0)
+```
+
+As described in the text, the grand average intercept ($\gamma_{00}$) is -0.34, which represents the average log-odds of choosing the high-demand option. This can be converted into a probability as follows:
+
+$P(\text{Choose High Demand}) = \frac{\exp(-0.34)}{1+\exp(-0.34)} = 0.42$. 
+
+In R, we can do this computation this as follows: 
+
+Extract the fixed effects from `logistic_MLM0` using the `fixef` function from `lme4`. Since this is a null model, the only fixed effect is the grand intercept ($\gamma_{00}$). 
+
+```{r print pChooseHighEffort pt.1, attr.source='.numberLines', message=FALSE}
+gamma_00 = fixef(logistic_MLM0)
+```
+
+Convert this to a probability using Eq. 2-3 in the main paper. 
+
+```{r print pChooseHighEffort pt.2, attr.source='.numberLines', message=FALSE}
+pChooseHighEffort <- exp(gamma_00)/(1+exp(gamma_00))
+cat('estimated group average probability of choosing the high-effort cue = ', pChooseHighEffort, '\n')
+```
+
+Print this estimate to the console.
+
+```{r print pChooseHighEffort, attr.source='.numberLines', message=FALSE}
+cat('estimated group average probability of choosing the high-effort cue = ', pChooseHighEffort, '\n')
+```
+
+# 3. Reproducing Figure 2 in the paper
+
+To reproduce Figure 2 in the paper, we will extract the estimated demand preferences (in log odds) per participant in the DST. These estimates are also known as "empirical Bayes' estimates", hence we will store these in a variable called `eb`. 
+
+```{r fig 2 pt.1, attr.source='.numberLines', message=FALSE}
+eb  <- coef(logistic_MLM0)$PID
+head(eb)
+```
+
+
+Next, we extract the variance around the intercept ($\tau^2_0$) using the `VarCorr` function from `lme4$`. The syntax here is a little convoluted. The `VarCorr` command extracts the random variance components from a fitted model (here `logistic_MLM0`). Alone, this yields a variance component per grouping variable and per number of random variance parameters specified in the model ($\tau^2_0$, $\tau^2_1$, etc.). In our case, we have one grouping variable, `PID`, and so we specify that we are interested in this the random intercept variance for this group using `$PID[1]`.
+
+```{r fig 2 pt.2, attr.source='.numberLines', message=FALSE}
+tau <- VarCorr(logistic_MLM0)$PID[1]
+```
+
+Finally, we visualize this distribution in a histogram and overall an estimated normal density curve with $\mu = \gamma_{00}$ and $\sigma = \sqrt{\tau^2_0}$. The specific steps taken here are not of critical importance to the topic of this tutorial, as they mainly involve plotting commands in base R. If this section is confusing for readers and they wish to be able to follow along better, we suggest this introductory website that explains basic visualization techniques inherent to R: https://bookdown.org/rdpeng/exdata/the-base-plotting-system-1.html. 
+
+```{r fig 2 pt.3, attr.source='.numberLines', message=FALSE}
+
+# plot the histogram of the random intercepts and overlay an estimated normal density curve with 
+# mu = gamma00 and sd = sqrt(tau^2_0)
+hist(eb[[1]], main='', xlab=expression(gamma[`00`] + U[`0j`]), freq = F, xlim=c(-3,3), ylim=c(0,1))
+curve(dnorm(x, fixef(logistic_MLM0), sqrt(tau)), add=T, lwd=2)
+
+# finally, shade in areas of demand-avoidance (b0 < 0) and demand-seeking respectively (b0 > 0)
+abline(v=0, lty='dashed', lwd=3)
+rect(0, 0, 10, 100, col = scales::alpha('red', .1))
+rect(0, 0, -10, 100, col = scales::alpha('blue', .1))
+text(-.75, .95, labels = 'Demand\navoidant')
+text(.75, .95, labels = 'Demand\nseeking')
+```
+
+
+# 4. Computing the ICC
+
+## 4a. Latent Threshold Method
+
+First, We extract the random intercept variance ($\tau^2_0$) using the `VarCorr` command (see explanation above). 
+
+```{r thresh icc pt. 1, attr.source='.numberLines', message=FALSE}
+tau20 <- VarCorr(logistic_MLM0)$PID[1]
+```
+
+Then, we specify the within-subjects (residual) variance to be $\sigma^2 = \frac{\pi^2}{3}$. 
+
+```{r thresh icc pt.2, attr.source='.numberLines', message=FALSE}
+sigma2    <- pi^2/3
+```
+
+Finally, we compute the ICC using the following equation $\frac{\tau^2_0}{\tau^2_0 + \sigma^2}$ and print this output to the console.
+
+```{r thresh icc pt.3, attr.source='.numberLines', message=FALSE}
+threshICC <- tau20/(tau20+sigma2)
+cat('ICC using the Latent Threshold Approach = ',threshICC,'\n')
+```
+
+## 4b. Simulation Method
+
+The simulation method requires multiple steps. 
+
+First, we set a seed for reproducibility. This ensures that the subsequent results will replicate on any device that runs this code. 
+
+```{r sim icc pt. 1, attr.source='.numberLines', message=FALSE}
+set.seed(2022) 
+```
+
+Next, we extract the the random intercept variance using `VarCorr`.
+
+```{r sim icc pt. 2, attr.source='.numberLines', message=FALSE}
+tau20 <- VarCorr(logistic_MLM0)$PID[1]
+
+```
+
+We extract the grand intercept ($\gamma_{00}$) using `fixef` (see explanation above). 
+
+```{r sim icc pt. 3, attr.source='.numberLines', message=FALSE}
+gamma00 <- fixef(logistic_MLM0)[[1]]
+```
+
+We set a large number of simulations to execute (here `1e5`or 100 000). We call this variable `M`.  
+
+```{r sim icc pt. 4, attr.source='.numberLines', message=FALSE}
+M <- 1e5
+```
+
+Next, we simulate the random effects from `M` draws and store these values in a variable called `U0j`. Note. we take the square root of $\tau^2_0$ because `rnorm()` requires the standard deviation, not the variance. 
+
+```{r sim icc pt. 5, attr.source='.numberLines', message=FALSE}
+U0j <- rnorm(M, 0, sqrt(tau20))
+```
+
+
+We then compute the expected probability (in log odds) of choosing the high demand option on each draw. Because `logisticMLM_0` has no predictors, this is computed simply as the grand intercept ($\gamma_{00}$) plus the random deviations from this intercept we simulated in the previous step. 
+
+```{r sim icc pt. 6, attr.source='.numberLines', message=FALSE}
+logit_p_hat <- gamma00+U0j
+```
+
+This is then converted into a probability (using Eq. 2-3 from the paper).
+
+```{r sim icc pt. 7, attr.source='.numberLines', message=FALSE}
+p_hat <- exp(logit_p_hat)/(1+exp(logit_p_hat))
+```
+
+We can then compute the level 1 variance using the equation for the Bernoulli variance: $\text{var} = \hat{p}*(1-\hat{p})$ (see main paper). 
+
+```{r sim icc pt. 8, attr.source='.numberLines', message=FALSE}
+var_L1 <- p_hat*(1-p_hat) 
+```
+
+Finally, we compute the ICC in the traditional way, taking the average level 1 variance as $\sigma^2$ and the variance of the predicted probabilities from each simulation $\hat{p}$ as $\tau^2_0$
+
+```{r sim icc pt. 9, attr.source='.numberLines', message=FALSE}
+sigma2 <- mean(var_L1)
+simICC <- var(p_hat)/(var(p_hat) + sigma2)
+```
+
+We then print the result to the console.
+```{r sim icc pt. 10, attr.source='.numberLines', message=FALSE}
+cat('ICC using the Simulation Model = ',simICC,'\n')
+```
+
+## 4c. Linearization Method
+
+The linearization method also proceeds in a series of steps. 
+
+First, $\tau^2_0$ and $\gamma_{00}$ are extracted from `logistic_MLM0` using `VarCorr` and `fixef` as we have done above. 
+
+```{r lin icc pt 1., attr.source='.numberLines', message=FALSE }
+tau20   <- VarCorr(logistic_MLM0)$PID[1]
+gamma00 <- fixef(logistic_MLM0)[[1]]
+```
+
+Next, we evaluate the probability of success at the mean of random effects (i.e., at the fixed effect, $\gamma_{00}$). 
+```{r lin icc pt 2., attr.source='.numberLines', message=FALSE }
+p <- exp(gamma00)/(1+exp(gamma00))
+```
+
+We then compute the Bernouilli variance of this fixed estimate and store this value in a variable called `var1`. 
+
+```{r lin icc pt 3., attr.source='.numberLines', message=FALSE }
+var1 <- p*(1-p)
+```
+
+Next, we compute the variance in the level-1 outcome using the linearized equation provided in the main text. We store this in a variable called `var2`.
+
+```{r lin icc pt 4., attr.source='.numberLines', message=FALSE }
+var2  <- tau20*p^2*(1 + exp(gamma00))^(-2)
+```
+
+Finally, with these values in hand, we compute the ICC, taking `var2` as our measure of between-person variance, $\tau^2_0$, and `var1` as our measure of within-person variance, $\sigma^2$, and print the result of this computation to the console.
+
+```{r lin icc pt 5., attr.source='.numberLines', message=FALSE }
+linICC  <- var2/(var1+var2)
+
+# print result
+cat('ICC using the Linearization method = ',linICC,'\n')
+```
+
+## 4d. Median Odds Ratio
+
+The MOR is straightforward to compute. 
+
+First, we extract the random intercept variance from the model using `VarCorr`.
+
+```{r MOR pt.1, attr.source='.numberLines', message=FALSE }
+tau20 <- VarCorr(logistic_MLM0)$PID[1]
+```
+
+Next, compute the 75th percentile of the cumulative distribution function of a standard normal distribution. In R, this can be done using the `qnorm` function and specifying the percentile (here 0.75). 
+
+```{r MOR pt.2, attr.source='.numberLines', message=FALSE }
+phi75 <- qnorm(.75) # 75th percentile of normal CDF
+```
+
+Now we can compute the MOR as: $MOR = \exp\left(\sqrt{2\tau^2_0}\phi(0.75)\right)$ and print this value to the console.
+
+```{r MOR pt.3, attr.source='.numberLines', message=FALSE }
+
+MOR <- exp(sqrt(2*tau20)*phi75)
+cat('Median Odds Ratio = ',MOR,'\n')
+```
+
+# 5. Bootstrapping
+
+Below we provide two bootstrapping techniques. First, we describe how to implement the bootstrapping procedure using the functions we provide alongside the paper. These functions are meant to be simple to implement, without the need for complex code that involves loops and storage. That being said, some readers may be interested in understanding this process. Accordingly, we provide a fully-worked example that goes through such a process.  
+
+## 5a. Bootstrapping using provided functions
+
+To utilize the function calls stored in `fx.R`, we first have to source them using the `source()` function from R. 
+
+```{r boot fx pt. 1, attr.source='.numberLines', message=FALSE }
+source('fx.R') 
+```
+
+Once this is done, we should have access to all of the custom functions provided in `fx.R`. Of interest to us here are those used for bootstrapping. Specifically, `bootstrap_icc`. This function takes the following arguments: 
+
+- `fit`: The fitted model 
+- `gr` : he grouping variable (in our case, `PID`)
+- `method`: The method to use: `icc_thr` (Threshold method), `icc_sim` (Simulation method), `icc_lin` (Linearization method), `MOR` (MOR).
+- `B`: The number of samples to produce. 
+- `seed`: The random seed to use. 
+
+As an example, we can compute 100 bootstraps of the ICC using the latent threshold method as follows. We can the print out these bootstrapped values. 
+
+Note: This can take a few moments.  
+
+```{r boot fx pt. 2, attr.source='.numberLines', message=FALSE }
+bootstrap_thr <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_thr', B = 100, seed = 2022)
+bootstrap_thr
+```
+
+Using the built-in `quantile` function in R, we can then compute 95% confidence intervals based on these bootstrapped estimates. 
+
+```{r boot fx pt. 3, attr.source='.numberLines', message=FALSE }
+quantile(bootstrap_thr, c(.025, .975))
+```
+
+For completeness, we illustrate the same syntax for bootstrapping estimates using the other methods described above, but do not run this code for time purposes. 
+
+```{r boot fx pt. 4, attr.source='.numberLines', message=FALSE, eval=FALSE}
+bootstrap_sim <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_sim', B = 100, seed = 2022)
+quantile(bootstrap_sim, c(.025, .975))
+
+bootstrap_lin <- bootstrap_icc(logistic_MLM0, gr='PID', method='icc_lin', B = 100, seed = 2022)
+quantile(bootstrap_lin, c(.025, .975))
+
+bootstrap_MOR <- bootstrap_icc(logistic_MLM0, gr='PID', method='MOR', B = 100, seed = 2022)
+quantile(bootstrap_MOR, c(.025, .975))
+
+```
+
+
+## 5b. Bootstrapping "by-hand"
+
+Below we provide commented code to estimate bootstrapped samples "by-hand" for readers who are interested. We will not comment on this in depth, as it is outside the scope of the tutorial and we provide functions to accomplish the same effect, but interested readers are welcome to explore the code below. 
+
+```{r boot hand, attr.source='.numberLines', message=FALSE, eval=F}
+
+# 0. Set constants for bootstrapping procedure
+B       <- 1000                    # number of bootstraps
+ids     <- logistic_MLM0@frame$PID # extract id vector from model data
+K       <- length(unique(ids))     # number of clusters (subjects)
+nTrials <- table(ids)              # number of trials per subject
+tau20   <- VarCorr(logistic_MLM0)$PID[1]
+g00     <- fixef(logistic_MLM0)[[1]]
+output  <- matrix(NA, B, 7, dimnames = list(NULL, c('iteration', 'threshICC', 'simICC', 'linICC', 'MOR', 'g00', 'tau20')))
+
+# 1. Cycle through iterations (i) of bootstrapped samples
+for(i in 1:B) {
+  if(i%%100==0) cat('bootstrapping is', round(i/B,2)*100, '% complete.')
+  # 1.1 Simulate data
+  U0j           <- rnorm(K, 0, tau20)        # random deviations per subject
+  LOR_j         <- g00 + U0j                 # log odds of response==1 per subject
+  p_j           <- exp(LOR_j)/(1+exp(LOR_j)) # convert LOR to probability
+  y_ij          <- sapply(1:K, function(k) rbinom(nTrials[k], 1, p_j[k]))
+  y_ij          <- unlist(y_ij)              # break out of a list format
+
+  # 1.2 Fit new model and compute values of interest
+  thisMLM       <- glmer(y_ij ~ 1 + (1|ids), family='binomial')
+  thisG00       <- fixef(thisMLM)[[1]]
+  thistau20     <- VarCorr(thisMLM)$ids[1]
+
+  # 1.2.1. Latent Threshold ICC
+  thisthreshICC <- thistau20/(thistau20+pi^2/3)
+
+  # 1.2.2. Simulation ICC
+  thisU0j       <- rnorm(1e5, 0, sqrt(thistau20))
+  logit_p_hat   <- thisG00+U0j
+  p_hat         <- exp(logit_p_hat)/(1+exp(logit_p_hat))
+  var_L1        <- p_hat*(1-p_hat)
+  sigma2        <- mean(var_L1)
+  thissimICC    <- var(p_hat)/(var(p_hat) + sigma2)
+
+  # 1.2.3. Linearlization
+  p             <- exp(thisG00)/(1+exp(thisG00))
+  var1          <- p*(1-p)
+  var2          <- thistau20*p^2*(1 + exp(gamma00))^(-2)
+  thislinICC    <- var2/(var1+var2)
+
+  # 1.2.4. MOR
+  thisMOR       <- exp(sqrt(2*thistau20)*qnorm(.75))
+
+  # 1.3. Save output
+  output[i,] = c(i, thisthreshICC, thissimICC, thislinICC, thisMOR, thisG00, thistau20)
+
+}
+```
+
+
+# 6. Computing the ICC with a model that contains predictors
+
+We will fit a model that predicts effort choice as a function of trial number (see main text for more details). 
+
+First, we will compute a block-wise trial number estimate, since one was not provided in the main text. The details here are not very important for readers unfamiliar with loops in R. All you need to know is that the final output is a vector of increasing integers that represent the trial number within a block of the DST, which is called `trial` in the dataframe, `data.Ctl`.  
+
+```{r blockwise trial num, attr.source='.numberLines', message=FALSE}
+data.Ctl = data.Ctl[order(c(data.Ctl$PID, data.Ctl$block)), ]
+data.Ctl = data.Ctl[!is.na(data.Ctl$PID),]
+
+trial = c()
+for(i in unique(data.Ctl$PID)) {
+  for(j in unique(data.Ctl$block)) {
+    trial = c(trial, 1:nrow(data.Ctl[data.Ctl$PID==i & data.Ctl$block==j, ]))
+  }
+}
+
+data.Ctl$trial=trial
+```
+
+Once these values are computed, we can model these data using the same `glmer` syntax described at the beginning of this document. 
+
+First, we centre trial number at its median. This is accomplished by simply substracting the median trial number (37) from each trial number in the vector. This guarantees that the intercept of the resultant model will represent the average probability (in log odds) of choosing the high-effort option at the middle trial of a block. We store these centred trial numbers in a vector called `trial_c`. 
+
+```{r fit trial mod pt. 1, attr.source='.numberLines', message=FALSE}
+data.Ctl$trial_c <- data.Ctl$trial - median(data.Ctl$trial)
+```
+
+We will also scale this newly centred trial numbers, `trial_c` to be between 0 and 1. This is necessary because `glmer` will sometimes run into issues when predictors are too large in magnitude. 
+
+```{r fit trial mod pt. 2, attr.source='.numberLines', message=FALSE}
+data.Ctl$trial0 <- data.Ctl$trial_c/max(data.Ctl$trial_c)
+```
+
+Having done this, we can fit the model below. Again, if this syntax is confusing to readers, visit https://www.learn-mlms.com/.  
+
+```{r fit trial mod pt. 3, attr.source='.numberLines', message=FALSE}
+logistic_MLM1 = glmer(effort_choice ~ trial0 + (1|PID), data=data.Ctl, family='binomial')
+summary(logistic_MLM1)
+```
+
+From here, the same code as described throughout this document could be used to estimate within- and between-person variability, but below we simply provide the functions to do so, available from `fx.R`. Readers are also welcome to compare these estimates to those obtained from `logistic_MLM0` above. 
+
+```{r icc trial mod, attr.source='.numberLines', message=FALSE}
+icc_thr(logistic_MLM1, 'PID')
+icc_sim(logistic_MLM1, 'PID')
+icc_lin(logistic_MLM1, 'PID')
+MOR(logistic_MLM1, 'PID')
+```
+
+# 7. Supplemental Materials
+
+For the examples here, we will predict participants' response times during the DST (`TS_RT`) from whether the previous trial was the same decision rule as the previous trial (`Switch`).
+
+## a. Linear regression of response times
+
+In R, we can compute a linear regression using the `lm()` command. 
+
+We predict the time it takes to respond from `Switch`. The outcome variable, `TS_RT` is placed before the `~` and the predictor, `Switch` is placed after. We then print the summary of the model to the console. 
+
+```{r rt lm pt. 1, attr.source='.numberLines', message=FALSE}
+linear_regression <- lm(TS_RT ~ Switch, data=data.Ctl)
+print(summary(linear_regression))
+```
+
+We can also print the residual variance, $\sigma^2$ of this model to the console using the `sigma` function with the model as the argument. Note: the `sigma` function return the standard deviation, which we then square to obtain $\sigma^2$.
+
+```{r rt lm pt. 2, attr.source='.numberLines', message=FALSE}
+
+cat('The residual variance (sigma^2) of the linear regession equals', sigma(linear_regression)^2, '\n')
+
+```
+
+## b. Multilevel linear regression of response times
+
+To fit a multilevel form of the regression above, we use the `lmer` function from the `lme4` package. 
+
+We fit the multilevel model using similar syntax to `lm`. The only difference is that we include a term for the random effects, where we specify we want random intercepts (`1`) per (`|`) participant (`PID`). 
+
+```{r rt mlm pt. 1, attr.source='.numberLines', message=FALSE}
+linear_MLM <- lmer(TS_RT ~ Switch + (1|PID), data=data.Ctl)
+```
+
+We then extract the random intercept variance, $\tau^2_0$ using `VarCorr` (see above for explanation). Unlike a logistic multilevel model, linear multilevel models have an estimated residual standard deviation term, which can be extracted using the `sigma` function and squared to produce the residual variance, $\sigma^2$. 
+
+```{r rt mlm pt.2, attr.source='.numberLines', message=FALSE}
+tau20  <- VarCorr(linear_MLM)$PID[1] 
+sigma2 <- sigma(linear_MLM)^2        
+
+```
+
+The ICC can be computed as: $ICC = \frac{\tau^2_0}{\tau^2_0 +\sigma^2}$. The summary of the model can then printed, along with the ICC. 
+
+```{r rt mlm pt.3, attr.source='.numberLines', message=FALSE}
+     
+ICC <- tau20/(tau20+sigma2)
+print(summary(linear_MLM))
+cat('The ICC for the linear MLM is', ICC, '\n')
+```
+
+## c. Reproduce Figure S1
+
+The steps to reproduce Figure S1 are more or less the same as to reproduce Figure 2. As such, we suggest readers read that section again to understand below. Again, if any of the visualization steps are unclear, we point readers to https://bookdown.org/rdpeng/exdata/the-base-plotting-system-1.html. 
+
+```{r fig s1, attr.source='.numberLines', message=FALSE}
+U0js <- coef(linear_MLM)$PID[,1]
+g00  <- fixef(linear_MLM)[1]
+hist(U0js, xlab = expression(gamma['00']+U['0j']), ylab='Number of Particpants', main='')
+abline(v=g00, col='red', lty=2, lwd=2)
+legend('topright', bty='n', col='red', lty=2, lwd=2, legend=expression(gamma['00']))
+```
+
+# References
+
+Bogdanov, M., Nitschke, J. P., LoParco, S., Bartz, J. A., & Otto, A. R. (2021). Acute psychosocial stress increases cognitive-effort avoidance. Psychological Science, 32(9), 1463-1475.
