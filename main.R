@@ -5,13 +5,12 @@
 #' @paper:   TODO
 
 # Load data ---------------------------------------------------------------
-# Load the data from .csv and do the following things: 
-  # 1. subset the data such that we only look at participants in the control condition 
-  # 2. For simplicity, recode effort choices so that 1 = high effort and 0 = low effort
+# 1. For simplicity, recode effort choices so that 1 = high effort and 0 = low effort
+# 2. subset the data such that we only look at participants in the control condition 
 
-data                   <- read.csv('Bogdanovetal2021/DST_data_osf2.csv')
-data.Ctl               <- data[data$condition=='control', ] # focus just on control condition
-data.Ctl$effort_choice <- abs(data.Ctl$effort_choice-1) 
+data               <- read.csv('Bogdanovetal2021/DST_data_osf2.csv')
+data$effort_choice <- abs(data$effort_choice-1) 
+data.Ctl           <- data[data$condition=='control', ] # focus just on control condition for now
 
 # Logistic multilevel model for choice -------------------------------------------------------------------
 # load the lme4 package (assuming the package is installed)
@@ -34,8 +33,22 @@ cat('estimated group average probability of choosing the high-effort cue = ', pC
 # # Reproduce Figure 2 from paper -----------------------------------------
 
 # extract random intercepts from model and add them to the fixed effect (gamma00) 
-eb  <- coef(logistic_MLM0)$PID
+eb <- coef(logistic_MLM0)$PID
 head(eb)
+
+# plot how individual differences in EB manifest in the behavioural data
+
+# get P(High effort) from each participant
+phigheff = tapply(data.Ctl$effort_choice, data.Ctl$PID, mean)
+
+# plot correlation between EB
+plot(eb$`(Intercept)`, phigheff, 
+     ylim=c(0,1), xlim=c(-3,3),
+     pch=21, cex=2, 
+     col='black', bg='lightblue', 
+     xlab=expression(gamma[`00`] + U[`0j`]), 
+     ylab='P(Choose High Effort)')
+abline(h=.5, lty=2)
 
 # extract the estimated random intercept variance (tau^2_0)
 tau <- VarCorr(logistic_MLM0)$PID[1]
@@ -186,26 +199,27 @@ quantile(bootstrap_MOR, c(.025, .975))
 # }
 
 
-# ICC with one predictor, random intercept, and fixed slopes -----------------------------------
+# ICC with one within-person predictor and random intercepts -----------------------------------
 
 # Compute trial per block to use as a predictor
-data.Ctl = data.Ctl[order(c(data.Ctl$PID, data.Ctl$block)), ]
-data.Ctl = data.Ctl[!is.na(data.Ctl$PID),]
+data.Ctl <- data.Ctl[order(c(data.Ctl$PID, data.Ctl$block)), ]
+data.Ctl <- data.Ctl[!is.na(data.Ctl$PID),]
 
-trial = c()
+trial <- c()
 for(i in unique(data.Ctl$PID)) {
   for(j in unique(data.Ctl$block)) {
-    trial = c(trial, 1:nrow(data.Ctl[data.Ctl$PID==i & data.Ctl$block==j, ]))
+    trial <- c(trial, 1:nrow(data.Ctl[data.Ctl$PID==i & data.Ctl$block==j, ]))
   }
 }
 
-data.Ctl$trial=trial
+data.Ctl$trial <- trial
 
 # Model effort choice trial-by-trial
-data.Ctl$trial_c = data.Ctl$trial - median(data.Ctl$trial)
-data.Ctl$trial0  = data.Ctl$trial_c/max(data.Ctl$trial_c)
+data.Ctl$trial_c <- data.Ctl$trial - median(data.Ctl$trial)
+data.Ctl$trial0  <- data.Ctl$trial_c/max(data.Ctl$trial_c)
   
-logistic_MLM1 = glmer(effort_choice ~ trial0 + (1|PID), data=data.Ctl, family='binomial')
+logistic_MLM1 <- glmer(effort_choice ~ trial0 + (1|PID), 
+                       data=data.Ctl, family='binomial')
 summary(logistic_MLM1)
 
 icc_thr(logistic_MLM0, 'PID')
@@ -214,11 +228,55 @@ icc_thr(logistic_MLM1, 'PID')
 icc_sim(logistic_MLM0, 'PID')
 icc_sim(logistic_MLM1, 'PID')
 
-icc_lin(logistic_MLM1, 'PID')
+icc_lin(logistic_MLM0, 'PID')
 icc_lin(logistic_MLM1, 'PID')
 
 MOR(logistic_MLM0, 'PID')
-MOR(logistic_MLM0, 'PID')
+MOR(logistic_MLM1, 'PID')
+
+# Make figure 3A
+# compute the ICC at each different steps along `trial` to see how it shifts
+# we will visualize this with the linearization
+iccs_across_trials <- icc_lin(logistic_MLM1, 'PID', avg_preds = F)
+
+plot(1:75, iccs_across_trials,
+     pch=21, cex=2,
+     col='black', bg='lightblue', 
+     xlab="Trial Number", 
+     ylab='ICC (Linearization Method)')
+abline(h=icc_lin(logistic_MLM1, 'PID'), lty=2, col='red')
+
+# ICC with one between-person predictor and random intercepts -----------------------------------
+# here we model effort choice by condition (control and stress)
+
+# dummy code condition
+data$condition <- as.factor(data$condition)
+contrasts(data$condition) <- contr.sum(2)
+
+# Fit model
+logistic_MLM2 <- glmer(effort_choice ~ condition + (1|PID), 
+                       data=data, family='binomial')
+summary(logistic_MLM2)
+
+# Compute ICC for each gender
+icc_thr(logistic_MLM2, 'PID') # 0.1507089
+icc_sim(logistic_MLM2, 'PID', avg_preds = F, seed=2023) # 0.1127125 0.1106655
+icc_lin(logistic_MLM2, 'PID', avg_preds = F) # 0.1245555 0.1189923
+MOR(logistic_MLM2, 'PID') # 2.072635
+
+# Compute averaged ICC
+icc_thr(logistic_MLM2, 'PID') # 0.1507089
+icc_sim(logistic_MLM2, 'PID',seed=2023) # 0.1115791
+icc_lin(logistic_MLM2, 'PID') # 0.1221064
+MOR(logistic_MLM2, 'PID') # 2.072635
+
+# Make Figure 3B
+barplot(icc_lin(logistic_MLM2, 'PID', avg_preds = F), 
+        ylim=c(0.10,0.14), xpd=F,
+        names.arg = c('Control', 'Stress'), 
+        ylab='ICC (Linearization Method)', 
+        xlab='Experimental Condition')
+abline(h=icc_lin(logistic_MLM2, 'PID'), lty=2, col='red')
 
 
 # Supplemental ------------------------------------------------------------
